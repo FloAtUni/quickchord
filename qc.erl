@@ -63,8 +63,8 @@ printNode(Node) ->
         lists:map(PrintFinger, IndexedFingers),
         io:format("~n~n")
     catch
-        exit:function_clause -> io:format("Error printing node~n");
-        exit:badarg -> io:format("Error printing node~n");
+        exit:function_clause -> io:format("Error printing node, empty list~n");
+        exit:badarg -> io:format("Error printing node, missing field~n");
         _:_ -> io:format("Error printing node: unhandled exception~n")
     end.
 
@@ -270,19 +270,35 @@ join(Self, SomeNode) ->
     node_await(Self2).
 
 %% ===== FOR TMAN ===== %%
+
 buildFullNode(NodeId, Predecessor, SuccNeighbors) ->
+    Fingers = buildFinger(NodeId, 1, SuccNeighbors, hd(SuccNeighbors)),
+    #node{nodeid=NodeId, predecessor=Predecessor, fingers=Fingers, data=dict:new()}.
 
-    pass.
+lastFinger([], Backup) -> Backup;
+lastFinger(L, _) -> lists:last(L).
 
-buildFinger(Idx, SuccNeighbors, LastFinger) ->
-    pass.
+buildFinger(MyId, Idx, SuccNeighbors, LastFinger) ->
+    IntervalEnd = finger_start(MyId, Idx+1),
+    FilterFun = fun({Id,_}) -> is_betweenCO(Id, MyId, IntervalEnd) end,
+    {Fingers, Tail} = lists:splitwith(FilterFun, SuccNeighbors),
+    Finger = case Fingers of
+                 [] -> LastFinger;
+                 _ -> randomElem(Fingers)
+             end,
+    if
+        Idx == ?T -> [Finger];
+        true -> [Finger|buildFinger(MyId, Idx+1, Tail, lastFinger(Fingers, Finger))]
+    end.
 
 %% ===== FUNCTIONS ===== %%
 
+finger_start(NodeId, Idx) when is_integer(NodeId) ->
+    Start = NodeId + (1 bsl (Idx-1)),
+    modRing(Start);
 finger_start(Self, Idx) ->
     MyId = Self#node.nodeid,
-    Start = MyId + (1 bsl (Idx-1)),
-    modRing(Start).
+    finger_start(MyId, Idx).
 
 closest_preceding_finger(Self, Id) ->
     get_closest_finger(lists:reverse(Self#node.fingers), Self#node.nodeid, Id).
@@ -317,6 +333,11 @@ is_betweenOC(Id, From, To) when From < To ->
 is_betweenOC(Id, From, To) when From > To ->
     Id > From orelse Id =< To.
 
+is_betweenCO(_, From, To) when From == To -> true;
+is_betweenCO(Id, From, To) when From < To ->
+    Id >= From andalso Id < To;
+is_betweenCO(Id, From, To) when From > To ->
+    Id >= From orelse Id < To.
 
 is_betweenCC(_, From, To) when From == To -> true;
 is_betweenCC(Id, From, To) when From < To ->
@@ -330,6 +351,10 @@ modRing(X) -> mod(X, (1 bsl ?T)).
 setNthElem(L, Idx, Elem) ->
     lists:sublist(L, Idx-1) ++ [Elem] ++ lists:nthtail(Idx, L).
 
+randomElem(L) ->
+    Idx = random:uniform(length(L)),
+    lists:nth(Idx, L).
+
 master() ->
     random:seed(now()),
     InitialProc = spawn(?MODULE, init_initial_node, [new_node(0)]),
@@ -339,7 +364,9 @@ master() ->
     ThirdProc = spawn(?MODULE, join, [new_node(3), {InitialId, InitialProc}]),
     ThirdId = get_id(ThirdProc),
     ForthProc = spawn(?MODULE, join, [new_node(6), {InitialId, InitialProc}]),
-    ForthId = get_id(ThirdProc),
+    ForthId = get_id(ForthProc),
+    FifthProc = spawn(?MODULE, join, [new_node(5), {InitialId, InitialProc}]),
+    FifthId = get_id(FifthProc),
     %io:format("Chord with 2 nodes: ~p(~p), ~p(~p)", [InitialId, InitialProc, SecondId, SecondProc]),
 
     timer:sleep(200),
@@ -350,5 +377,7 @@ master() ->
     ThirdProc ! {printstate},
     timer:sleep(200),
     ForthProc ! {printstate},
+    timer:sleep(200),
+    FifthProc ! {printstate},
     timer:sleep(200),
     pass.

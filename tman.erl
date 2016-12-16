@@ -10,7 +10,7 @@
 -define(CycleTimeMs, 200). % The cycle interval for the T-Man to ask neighbors in Miliseconds
 -define(NBCycles, 15).
 
--import(qc, [buildFullNode/3]).
+-import(qc, [buildFullNode/3, node_await/1]).
 
 hash(Identifier) ->
     <<X:256/big-unsigned-integer>> = crypto:hash(sha256, Identifier),
@@ -38,12 +38,16 @@ master() ->
     Nodes = [ {NodeId, spawn(?MODULE, node_init, [NodeId])} || NodeId <- NodeIds],
     % send to each node a random subset of nodes (initial neighbors)
     distributeSubsets(Nodes, Nodes),
-    %[Pid ! {init, randomSubset(Nodes, ?NBINIT)} || {_,Pid} <- Nodes],
 
     timer:sleep(200),
-    {_,FirstProc} = hd(Nodes),
-    FirstProc ! {printstate},
-    timer:sleep(200),
+    lists:foreach(fun({_,Proc}) ->
+                          Proc ! {printstate},
+                          timer:sleep(200)
+                  end, Nodes),
+    %timer:sleep(200),
+    %{_,FirstProc} = hd(Nodes),
+    %FirstProc ! {printstate},
+    %timer:sleep(200),
     pass.
 
 node_init(NodeId) ->
@@ -54,7 +58,8 @@ node_init(NodeId) ->
 
 cycle(NodeId, Neighbors, 1) ->
     Pred = hd(sortByPredDist(Neighbors, NodeId)),
-    buildFullNode(NodeId, Pred, sortBySuccDist(Neighbors, NodeId));
+    FullNode = buildFullNode(NodeId, Pred, sortBySuccDist(Neighbors, NodeId)),
+    node_await(FullNode).
 cycle(NodeId, Neighbors, CycleNr) ->
     {RandomNeighborId, RandomNeighborProc} = randomElem(Neighbors),
     WaitMs = random:uniform(?CycleTimeMs),
