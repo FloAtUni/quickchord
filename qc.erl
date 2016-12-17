@@ -20,11 +20,11 @@
 -compile(export_all).
 
 
--define(T, 3). % Default: 8, Number of bites of the identifier
+-define(T, 8). %3 For Demo, Default: 8, Number of bites of the identifier
 
 hash(Identifier) ->
     <<X:256/big-unsigned-integer>> = crypto:hash(sha256, Identifier),
-    X rem (1 bsl ?T). % calculates 2^m
+    modRing(X). %X rem (1 bsl ?T). % calculates 2^m
 
 gen_node_id() ->
     Salt = atom_to_list(node()),
@@ -43,10 +43,10 @@ predecessor(Self) -> Self#node.predecessor.
 
 new_node() ->
     Id = gen_node_id(),
-    io:format("Created new Node with id: ~p~n", [Id]),
+    %io:format("Created new Node with id: ~p~n", [Id]),
     #node{nodeid=Id, data=dict:new()}.
 new_node(Id) ->
-    io:format("Created new Node with id: ~p~n", [Id]),
+    %io:format("Created new Node with id: ~p~n", [Id]),
     #node{nodeid=Id, data=dict:new()}.
 
 id({Id, _}) -> Id.
@@ -57,6 +57,7 @@ printNode(Node) ->
         io:format("~nNode ~p: ~n", [Node#node.nodeid]),
         io:format("~cSucessor: ~p~n", [9, id(hd(Node#node.fingers))]),
         io:format("~cPredecessor: ~p~n", [9, id(Node#node.predecessor)]),
+        io:format("~cKeys stored: ~p~n", [9, dict:fetch_keys(Node#node.data)]),
         PrintFinger = fun({Idx, Finger}) -> printFinger(Node, Idx, Finger) end,
         Fingers = Node#node.fingers,
         IndexedFingers = lists:zip(lists:seq(1, length(Fingers)), Fingers),
@@ -85,34 +86,56 @@ node_await(Self) ->
     MyId = Self#node.nodeid,
     receive
         {getid, FromProc} ->
-            io:format("Node ~p: Got GetId Query~n", [MyId]),
+            %io:format("Node ~p: Got GetId Query~n", [MyId]),
             FromProc ! {gotid, MyId};
         {getsucc, FromProc} ->
-            io:format("Node ~p: Got GetSucc Query~n", [MyId]),
+            %io:format("Node ~p: Got GetSucc Query~n", [MyId]),
             FromProc ! {gotsucc, successor(Self)};
         {getpred, FromProc} ->
-            io:format("Node ~p: Got GetPred Query~n", [MyId]),
+            %io:format("Node ~p: Got GetPred Query~n", [MyId]),
             FromProc ! {gotpred, predecessor(Self)};
         {closestprecedingfinger, FromProc, Id} ->
-            io:format("Node ~p: Got ClosestPrecedingFinger Query~n", [MyId]),
+            %io:format("Node ~p: Got ClosestPrecedingFinger Query~n", [MyId]),
             FromProc ! {gotclosestprecedingfinger, closest_preceding_finger(Self, Id)};
         {findpred, From, Id} ->
-            io:format("Node ~p: Got FindPred Query~n", [MyId]),
+            %io:format("Node ~p: Got FindPred Query~n", [MyId]),
             Pred = find_predecessor(Self, Id),
             From ! {foundpred, Pred};
         {findsucc, From, Id} ->
-            io:format("Node ~p: Got FindSuccessor Query~n", [MyId]),
+            %io:format("Node ~p: Got FindSuccessor Query~n", [MyId]),
             Succ = find_successor(Self, Id),
             From ! {foundsucc, Succ};
         {newpred, Pred} ->
-            io:format("Node ~p: Got New Predecessor Update Query~n", [MyId]),
+            %io:format("Node ~p: Got New Predecessor Update Query~n", [MyId]),
             node_await(Self#node{predecessor=Pred});
         {updatefinger, NewNode, Idx} ->
-            io:format("Node ~p: Got UpdateFinger Query with Index ~p~n", [MyId, Idx]),
+            %io:format("Node ~p: Got UpdateFinger Query with Index ~p~n", [MyId, Idx]),
             NewSelf = update_finger(Self, self(), NewNode, Idx),
             node_await(NewSelf);
+        {setkey, Key, Value} ->
+            Data = dict:store(Key, Value, Self#node.data),
+            node_await(Self#node{data=Data});
+        {getkey, From, Key} ->
+            Dict = Self#node.data,
+            Result = dict:find(Key, Dict),
+            case Result of
+            %case dict:find(Key, Self#node.data) of
+                {ok, Value} -> From ! {gotkey, Value};
+                error ->  From ! {gotkey, notfound}
+            end;
+        {insert, From, Key, Value} ->
+            KeyHash = hash(Key),
+            Succ = find_successor(Self, KeyHash),
+            Self2 = set_key(Self, Succ, Key, Value),
+            From ! {storedkey, id(Succ)},
+            node_await(Self2);
+        {fetch, From, Key} ->
+            KeyHash = hash(Key),
+            Succ = find_successor(Self, KeyHash),
+            Value = get_key(Self, Succ, Key),
+            From ! {fetched, Value};
         {printstate} ->
-            io:format("Node ~p: Got PrintState Query~n", [MyId]),
+            %io:format("Node ~p: Got PrintState Query~n", [MyId]),
             %io:format("~p~n~n", [Self])
             printNode(Self)
     end,
@@ -143,11 +166,29 @@ get_id(NodeProc) ->
         {gotid, Id} -> Id
     end.
 
+get_key(Self, {_,NodeProc}, Key) when NodeProc == self() ->
+    Dict = Self#node.data,
+    dict:find(Key, Dict);
+get_key(_, {_,NodeProc}, Key) ->
+    NodeProc ! {getkey, self(), Key},
+    receive
+        {gotkey, notfound} -> error;
+        {gotkey, Value} -> {ok, Value}
+    end.
+
+
+set_key(Self, {_,NodeProc}, Key, Value) when NodeProc == self() ->
+    Data = dict:store(Key, Value, Self#node.data),
+    Self#node{data=Data};
+set_key(Self, {_,NodeProc}, Key, Value) ->
+    NodeProc ! {setkey, Key, Value},
+    Self.
+
 get_closest_preceding_finger(Self, {_, NodeProc}, Id) when NodeProc =:= self() ->
-    io:format("get_closest_preceding_finger on self~n"),
+    %io:format("get_closest_preceding_finger on self~n"),
     closest_preceding_finger(Self, Id);
 get_closest_preceding_finger(_, {_, NodeProc}, Id) ->
-    io:format("get_closest_preceding_finger rpc~n"),
+    %io:format("get_closest_preceding_finger rpc~n"),
     NodeProc ! {closestprecedingfinger, self(), Id},
     receive
         {gotclosestprecedingfinger, NewNode} -> NewNode
@@ -156,12 +197,12 @@ get_closest_preceding_finger(_, {_, NodeProc}, Id) ->
 % {findsucc, From, Id} Find successor to node with id
 
 find_predecessor(Self, Id) ->
-    io:format("Find predecessor called on self()~n"),
+    %io:format("Find predecessor called on self()~n"),
     MyId = Self#node.nodeid,
     findpred(Self, {MyId, self()}, Id).
 
 find_predecessor(_, {_, SomeNodeProc}, Id) ->
-    io:format("Find predecessor called for rpc~n"),
+    %io:format("Find predecessor called for rpc~n"),
     SomeNodeProc ! {findpred, self(), Id},
     receive
         {foundpred, Pred} ->
@@ -169,27 +210,27 @@ find_predecessor(_, {_, SomeNodeProc}, Id) ->
     end.
 
 findpred(Self, {PredId, PredProc}, Id) ->
-    io:format("~nFindPred with n'=~p and id=~p called~n", [PredId, Id]),
-    io:format("With Node: "),
-    printNode(Self),
+    %io:format("~nFindPred with n'=~p and id=~p called~n", [PredId, Id]),
+    %io:format("With Node: "),
+    %printNode(Self),
     {SuccToPredId, _} = get_succ(Self, {PredId, PredProc}),
-    io:format("Successor: ~p~n~n", [SuccToPredId]),
+    %io:format("Successor: ~p~n~n", [SuccToPredId]),
     IsBetween = is_betweenOC(Id, PredId, SuccToPredId),
-    io:format("Is Id(~p) Between PredId(~p) and his Successor(~p)~n", [Id, PredId, SuccToPredId]),
+    %io:format("Is Id(~p) Between PredId(~p) and his Successor(~p)~n", [Id, PredId, SuccToPredId]),
     if
         IsBetween -> {PredId, PredProc};
         true ->
             ClosestPrecFinger = get_closest_preceding_finger(Self, {PredId, PredProc}, Id),
-            io:format("Closest Preceeding Finger: ~p~n", [ClosestPrecFinger]),
+            %io:format("Closest Preceeding Finger: ~p~n", [ClosestPrecFinger]),
             findpred(Self, ClosestPrecFinger, Id)
     end.
 
 find_successor(Self, Id) ->
-    io:format("Find successor called on self()~n"),
+    %io:format("Find successor called on self()~n"),
     Pred = find_predecessor(Self, Id),
     get_succ(Self, Pred).
 find_successor(_, {_, OtherProc}, Id) ->
-    io:format("Find successor sends rpc~n"),
+    %io:format("Find successor sends rpc~n"),
     OtherProc ! {findsucc, self(), Id},
     receive
         {foundsucc, Succ} ->
@@ -211,13 +252,13 @@ update_finger(Self, RecipientProc, NewNode, Index) when RecipientProc =:= self()
     IsBetween = is_betweenCC(NewNodeId, MyId, NthFingerId),
     if
         IsBetween ->
-            io:format("Updated Finger[~p], New Node(~p) between me(~p) and current finger(~p)~n", [Index, NewNodeId, MyId, NthFingerId]),
+            %io:format("Updated Finger[~p], New Node(~p) between me(~p) and current finger(~p)~n", [Index, NewNodeId, MyId, NthFingerId]),
             Fingers = setNthElem(Self#node.fingers, Index, NewNode),
             {_, PredProc} = Self#node.predecessor,
             update_finger(Self, PredProc, NewNode, Index),
             Self#node{fingers=Fingers};
         true ->
-            io:format("Not Updated Finger[~p], New Node(~p) not between me(~p) and current finger(~p)~n", [Index, NewNodeId, MyId, NthFingerId]),
+            %io:format("Not Updated Finger[~p], New Node(~p) not between me(~p) and current finger(~p)~n", [Index, NewNodeId, MyId, NthFingerId]),
             Self
     end;
 update_finger(Self, RecipientProc, NewNode, Index) ->
@@ -254,8 +295,8 @@ update_others(Self, Idx) ->
     MyId = Self#node.nodeid,
     MyNode = {MyId, self()},
     SearchId = mod(1 + MyId - (1 bsl (Idx-1)), (1 bsl ?T)), % TODO 1 +... because otherwise we dont find nodeid=searchid
-    {PredId, PProc} = find_predecessor(Self, SearchId),
-    io:format("Node ~p: Predecessor to SearchId(~p) is ~p~n", [MyId, SearchId, PredId]),
+    {_, PProc} = find_predecessor(Self, SearchId),
+    %io:format("Node ~p: Predecessor to SearchId(~p) is ~p~n", [MyId, SearchId, PredId]),
     update_finger(Self, PProc, MyNode, Idx),
     if
         Idx == ?T ->
@@ -291,6 +332,28 @@ buildFinger(MyId, Idx, SuccNeighbors, LastFinger) ->
         true -> [Finger|buildFinger(MyId, Idx+1, Tail, lastFinger(Fingers, Finger))]
     end.
 
+%% ===== IMPORT/EXPORT
+
+insertCountries({_,Proc}) ->
+    {ok, Countries} = file:consult("countries.txt"),
+    lists:foreach(fun({Country,Capitol}) ->
+                          Proc ! {insert, self(), Country, Capitol},
+                          receive
+                              {storedkey, Id} -> io:format("Stored Key ~p on ~p~n", [Country, Id])
+                          end
+                  end, Countries),
+    io:format("Stored all countries in DHT~n").
+
+fetchCountry({_, Proc}, Key) ->
+    Proc ! {fetch, self(), Key},
+    Response = receive
+        {fetched, Resp} -> Resp
+               end,
+    case Response of
+        error -> io:format("Could not find Countrie ~p~n", [Key]);
+        {ok, Value} -> io:format("Capitol of Country ~p is ~p", [Key, Value])
+    end.
+
 %% ===== FUNCTIONS ===== %%
 
 finger_start(NodeId, Idx) when is_integer(NodeId) ->
@@ -305,11 +368,11 @@ closest_preceding_finger(Self, Id) ->
 
 
 get_closest_finger([], _, _) ->
-    io:format("Error: get_closest_finger got empty list~n"),
+    %io:format("Error: get_closest_finger got empty list~n"),
     erlang:error(fingers_empty);
 get_closest_finger([Finger], _, _) -> Finger;
 get_closest_finger([{FingerId,FingerPID}|Fingers], MyId, Id) ->
-    io:format("closest_finger: FingerId(~p) between me(~p) and id(~p)~n", [FingerId, MyId, Id]),
+    %io:format("closest_finger: FingerId(~p) between me(~p) and id(~p)~n", [FingerId, MyId, Id]),
     IsBetween = is_betweenCC(FingerId, MyId, Id) andalso FingerId /= MyId,
     if
         IsBetween ->

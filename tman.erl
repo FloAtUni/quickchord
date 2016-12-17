@@ -3,18 +3,18 @@
 
 -compile(export_all).
 
--define(N, 4). % Number of nodes
+-define(N, 6). % Number of nodes
 -define(T, 8). % Number of bites of the identifier
--define(M, 2). % Message size for T-Man(even number)
+-define(M, 4). % Message size for T-Man(even number)
 -define(NBINIT, 2). % Number of initial neighbors
--define(CycleTimeMs, 200). % The cycle interval for the T-Man to ask neighbors in Miliseconds
+-define(CycleTimeMs, 50). % The cycle interval for the T-Man to ask neighbors in Miliseconds
 -define(NBCycles, 15).
 
--import(qc, [buildFullNode/3, node_await/1]).
+-import(qc, [buildFullNode/3, node_await/1, insertCountries/1, modRing/1, fetchCountry/2, insertCountries/1]).
 
 hash(Identifier) ->
     <<X:256/big-unsigned-integer>> = crypto:hash(sha256, Identifier),
-    X rem (1 bsl ?T). % calculates 2^T
+    modRing(X). %X rem (1 bsl ?T). % calculates 2^m
 
 gen_node_id() ->
     Salt = atom_to_list(node()),
@@ -39,12 +39,16 @@ master() ->
     % send to each node a random subset of nodes (initial neighbors)
     distributeSubsets(Nodes, Nodes),
 
+    timer:sleep(1000),
+    insertCountries(hd(Nodes)),
+
     timer:sleep(200),
     lists:foreach(fun({_,Proc}) ->
                           Proc ! {printstate},
                           timer:sleep(200)
                   end, Nodes),
-    %timer:sleep(200),
+    timer:sleep(500),
+    fetchCountry(hd(Nodes), "Switzerland"),
     %{_,FirstProc} = hd(Nodes),
     %FirstProc ! {printstate},
     %timer:sleep(200),
@@ -59,7 +63,10 @@ node_init(NodeId) ->
 cycle(NodeId, Neighbors, 1) ->
     Pred = hd(sortByPredDist(Neighbors, NodeId)),
     FullNode = buildFullNode(NodeId, Pred, sortBySuccDist(Neighbors, NodeId)),
-    node_await(FullNode).
+    timer:sleep(random:uniform(100)),
+    printTmanNode(NodeId, Neighbors),
+    io:format("TMan Node ~p start chord~n", [NodeId]),
+    node_await(FullNode);
 cycle(NodeId, Neighbors, CycleNr) ->
     {RandomNeighborId, RandomNeighborProc} = randomElem(Neighbors),
     WaitMs = random:uniform(?CycleTimeMs),
@@ -88,9 +95,10 @@ cycle_waiting(NodeId, Neighbors, CycleNr) ->
 %% ===== FUNCTIONS ===== %%
 
 printTmanNode(NodeId, Neighbors) ->
-    io:format("~nNode ~p has Neighbors:~n", [NodeId]),
-    lists:map(fun({Id,_}) -> io:format("~c~p~n", [9, Id]) end, Neighbors),
-    io:format("~n~n").
+    Out1 = io_lib:format("~n~nNode ~p has Neighbors:~n", [NodeId]),
+    Out2 = lists:map(fun({Id,_}) -> io_lib:format("~c~p~n", [9, Id]) end, Neighbors),
+    Out = lists:flatten([Out1|Out2]),
+    io:fwrite(Out).
 
 mergeNeighbors(Lists, NodeId) ->
     lists:delete({NodeId, self()}, sortByDist(lists:concat(Lists), NodeId)).
