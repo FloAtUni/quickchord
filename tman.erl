@@ -27,9 +27,9 @@ node_init(NodeId) ->
 cycle(NodeId, Neighbors, 1) ->
     Pred = hd(sortByPredDist(Neighbors, NodeId)),
     FullNode = buildFullNode(NodeId, Pred, sortBySuccDist(Neighbors, NodeId)),
-    timer:sleep(random:uniform(100)),
-    printTmanNode(NodeId, Neighbors),
-    io:format("TMan Node ~p start chord~n", [NodeId]),
+    %timer:sleep(random:uniform(100)),
+    %printTmanNode(NodeId, Neighbors),
+    %io:format("TMan Node ~p start chord~n", [NodeId]),
     node_await(FullNode);
 cycle(NodeId, Neighbors, CycleNr) ->
     {RandomNeighborId, RandomNeighborProc} = randomElem(Neighbors),

@@ -3,12 +3,12 @@
 -import(config, [getC/1]).
 -import(common, [gen_node_id/0]).
 -import(tman, [distributeSubsets/2]).
--import(qc, [insertDataFromFile/2, fetchDataRow/2]).
+-import(qc, [insertDataFromFile/2, fetchDataRow/2, fetchHopcount/2]).
 
 -export([master/0]).
 
 insertData(Node) ->
-    insertDataFromFile(Node, "data/small_data.txt"),
+    insertDataFromFile(Node, "data/small_data.txt"), %"data/small_data.txt"),
     io:format("Stored all data in DHT~n").
 
 
@@ -18,7 +18,6 @@ fetchData(Node, Key) ->
         error -> io:format("Could not find entry ~p~n", [Key]);
         {ok, Value} -> io:format("Key: ~p Value: ~p", [Key, Value])
     end.
-
 
 master() ->
     random:seed(now()),
@@ -30,13 +29,16 @@ master() ->
     timer:sleep(1000),
     insertData(hd(Nodes)),
 
-    %timer:sleep(200),
+    timer:sleep(200),
     %lists:foreach(fun({_,Proc}) ->
     %                      Proc ! {printstate},
     %                      timer:sleep(200)
     %              end, Nodes),
     %timer:sleep(500),
-    fetchData(hd(Nodes), "Ox3wMCN"),
+
+    %fetchData(hd(Nodes), "dRjWBUj"),
+    Count = fetchHopcount(hd(Nodes), "dRjWBUj"),
+    io:format("Count: ~p~n", [Count]),
 
 %{_,FirstProc} = hd(Nodes),
 %FirstProc ! {printstate},

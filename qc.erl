@@ -83,24 +83,30 @@ node_await(Self) ->
     receive
         {getid, FromProc} ->
             %io:format("Node ~p: Got GetId Query~n", [MyId]),
-            FromProc ! {gotid, MyId};
+            FromProc ! {gotid, MyId},
+            node_await(Self);
         {getsucc, FromProc} ->
             %io:format("Node ~p: Got GetSucc Query~n", [MyId]),
-            FromProc ! {gotsucc, successor(Self)};
+            FromProc ! {gotsucc, successor(Self)},
+            node_await(Self);
         {getpred, FromProc} ->
             %io:format("Node ~p: Got GetPred Query~n", [MyId]),
-            FromProc ! {gotpred, predecessor(Self)};
+            FromProc ! {gotpred, predecessor(Self)},
+            node_await(Self);
         {closestprecedingfinger, FromProc, Id} ->
             %io:format("Node ~p: Got ClosestPrecedingFinger Query~n", [MyId]),
-            FromProc ! {gotclosestprecedingfinger, closest_preceding_finger(Self, Id)};
+            FromProc ! {gotclosestprecedingfinger, closest_preceding_finger(Self, Id)},
+            node_await(Self);
         {findpred, From, Id} ->
             %io:format("Node ~p: Got FindPred Query~n", [MyId]),
             Pred = find_predecessor(Self, Id),
-            From ! {foundpred, Pred};
+            From ! {foundpred, Pred},
+            node_await(Self);
         {findsucc, From, Id} ->
             %io:format("Node ~p: Got FindSuccessor Query~n", [MyId]),
             Succ = find_successor(Self, Id),
-            From ! {foundsucc, Succ};
+            From ! {foundsucc, Succ},
+            node_await(Self);
         {newpred, Pred} ->
             %io:format("Node ~p: Got New Predecessor Update Query~n", [MyId]),
             node_await(Self#node{predecessor=Pred});
@@ -118,7 +124,8 @@ node_await(Self) ->
             %case dict:find(Key, Self#node.data) of
                 {ok, Value} -> From ! {gotkey, Value};
                 error ->  From ! {gotkey, notfound}
-            end;
+            end,
+            node_await(Self);
         {insert, From, Key, Value} ->
             KeyHash = hash(Key),
             Succ = find_successor(Self, KeyHash),
@@ -129,13 +136,20 @@ node_await(Self) ->
             KeyHash = hash(Key),
             Succ = find_successor(Self, KeyHash),
             Value = get_key(Self, Succ, Key),
-            From ! {fetched, Value};
+            From ! {fetched, Value},
+            node_await(Self);
+        {hopcount, From, Key} ->
+            KeyHash = hash(Key),
+            Count = hopcount(Self, KeyHash)+1, %plus successor
+            From ! {hopcount, Count},
+            node_await(Self);
         {printstate} ->
             %io:format("Node ~p: Got PrintState Query~n", [MyId]),
             %io:format("~p~n~n", [Self])
-            printNode(Self)
-    end,
-    node_await(Self).
+            printNode(Self),
+            node_await(Self);
+        {exit} -> exit
+    end.
 
 get_pred(Self, {_, NodeProc}) when NodeProc =:= self() ->
     predecessor(Self);
@@ -190,8 +204,10 @@ get_closest_preceding_finger(_, {_, NodeProc}, Id) ->
         {gotclosestprecedingfinger, NewNode} -> NewNode
     end.
 
-% {findsucc, From, Id} Find successor to node with id
-
+hopcount(Self, Id) ->
+    MyId = Self#node.nodeid,
+    {Hopcount, _} = findpred(Self, {MyId, self()}, Id),
+    Hopcount.
 
 find_predecessor(Self, Id) ->
     %io:format("Find predecessor called on self()~n"),
@@ -347,6 +363,7 @@ insertData(Proc, DataRows) ->
 
 insertDataFromFile({_, Proc}, FileName) ->
     {ok, DataRows} = file:consult(FileName),
+    io:format("Read all Input Data~n"),
     insertData(Proc, DataRows).
 
 insertDataFromFileP(Nodes, FileName) ->
@@ -381,10 +398,12 @@ fetchDataRow({_, Proc}, Key) ->
         {fetched, Resp} -> Resp
     end.
 
-hopcount(Self, Id) ->
-    MyId = Self#node.nodeid,
-    {Hopcount, _} = findpred(Self, {MyId, self()}, Id),
-    Hopcount.
+fetchHopcount({_, Proc}, Key) ->
+    Proc ! {hopcount, self(), Key},
+    receive
+        {hopcount, Count} -> Count
+    end.
+
 
 failureRate(Nodes, Keys) ->
     N = min(length(Nodes), Keys),
