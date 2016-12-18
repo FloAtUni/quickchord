@@ -1,6 +1,6 @@
 -module(tman).
-%-export([master/0]).
 
+%-export([master/0]).
 -compile(export_all).
 
 -import(config, [getC/1]).
@@ -8,9 +8,6 @@
 -import(qc, [buildFullNode/3, node_await/1, modRing/1, fetchCountry/2]).
 
 
-% Gossip Message: {gossip, FromId, FromProc, {SuccesorsNeirestToRecipient, PredecessorsNeirestToRecipient}}
-% Gossip Response: {gossip2, {SuccesorsNeirestToRecipient, PredecessorsNeirestToRecipient}
-% Next Cycle Message: {nextcycle}
 
 distributeSubsets([], _) -> done;
 distributeSubsets([Node|Nodes], AllNodes) ->
@@ -23,6 +20,18 @@ node_init(NodeId) ->
         {init, NodeSubset} ->
             cycle(NodeId, sortByDist(NodeSubset, NodeId), getC(nbcycles))
     end.
+
+spawnLocalTManNodes() ->
+    NodeIds = [gen_node_id() || _ <- lists:seq(1,getC(n))],
+    [ {NodeId, spawn(?MODULE, node_init, [NodeId])} || NodeId <- NodeIds].
+
+spawnRemoteTManNodes() ->
+    {ok, [_|Es]} = file:consult('enodes.conf'),
+    N = getC(n),
+    PN = (getC(n) div length(Es)) + 1,
+    Ps = lists:sublist(lists:flatten(lists:duplicate(PN,Es)),N),
+    NodeIds = lists:zip([gen_node_id() || _ <- lists:seq(1,N)],Ps),
+    [ {NodeId, spawn(P, ?MODULE, node_init, [NodeId])} || {NodeId,P} <- NodeIds].
 
 cycle(NodeId, Neighbors, 1) ->
     Pred = hd(sortByPredDist(Neighbors, NodeId)),
@@ -43,10 +52,8 @@ cycle_waiting(NodeId, Neighbors, CycleNr) ->
     receive
         {gossip, FromId, FromProc, {NewSuccs, NewPreds}} ->
             FromProc ! {gossip2, nearestNeighbors(Neighbors, FromId)},
-            %cycle_waiting(NodeId, sortByDist(lists:concat([Neighbors, NewSuccs, NewPreds]), NodeId), CycleNr);
             cycle_waiting(NodeId, mergeNeighbors([Neighbors, NewSuccs, NewPreds], NodeId), CycleNr);
         {gossip2, {NewSuccs, NewPreds}} ->
-            %cycle_waiting(NodeId, sortByDist(lists:concat([Neighbors, NewSuccs, NewPreds]), NodeId), CycleNr);
             cycle_waiting(NodeId, mergeNeighbors([Neighbors, NewSuccs, NewPreds], NodeId), CycleNr);
         {nextcycle} ->
             cycle(NodeId, Neighbors, CycleNr-1);
@@ -75,7 +82,7 @@ nearestNeighbors(Neighbors, OtherId) ->
     FromPreds = lists:sublist(sortByPredDist(Neighbors, OtherId), getC(m) div 2),
     {FromSuccs, FromPreds}.
 
-% Sort by distance
+% Sort by distance in chord
 sortByDist(L, Id) ->
     Compare = fun({A,_},{B,_}) -> dist(A, Id) =< dist(B, Id) end,
     lists:usort(Compare, L).

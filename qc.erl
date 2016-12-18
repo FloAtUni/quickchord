@@ -368,6 +368,7 @@ insertDataFromFile({_, Proc}, FileName) ->
 
 insertDataFromFileP(Nodes, FileName) ->
     {ok, DataRows} = file:consult(FileName),
+    io:format("Read all Input Data~n"),
     N = min(length(Nodes), DataRows),
     M = length(DataRows) div length(Nodes),
     {Rest, Pids} = lists:foldl(fun(Node, {RestData, Procs}) ->
