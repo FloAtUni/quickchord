@@ -19,12 +19,8 @@
 % TODO replace with -export([master/2,...]).
 -compile(export_all).
 
-
--define(T, 8). %3 For Demo, Default: 8, Number of bites of the identifier
-
-hash(Identifier) ->
-    <<X:256/big-unsigned-integer>> = crypto:hash(sha256, Identifier),
-    modRing(X). %X rem (1 bsl ?T). % calculates 2^m
+-import(config, [getC/1]).
+-import(common, [sum/1, setNthElem/3, randomElem/1, modRing/1, mod/2, hash/1]).
 
 gen_node_id() ->
     Salt = atom_to_list(node()),
@@ -77,7 +73,7 @@ printFinger(Node, Idx, {FingerId, _}) ->
 init_initial_node(Self) ->
     MyId = Self#node.nodeid,
     SelfRef = {MyId, self()},
-    Fingers = lists:duplicate(?T, SelfRef),
+    Fingers = lists:duplicate(getC(t), SelfRef),
     NewSelf = Self#node{predecessor=SelfRef, fingers=Fingers},
     node_await(NewSelf).
 
@@ -196,10 +192,12 @@ get_closest_preceding_finger(_, {_, NodeProc}, Id) ->
 
 % {findsucc, From, Id} Find successor to node with id
 
+
 find_predecessor(Self, Id) ->
     %io:format("Find predecessor called on self()~n"),
     MyId = Self#node.nodeid,
-    findpred(Self, {MyId, self()}, Id).
+    {_, Pred} = findpred(Self, {MyId, self()}, Id),
+    Pred.
 
 find_predecessor(_, {_, SomeNodeProc}, Id) ->
     %io:format("Find predecessor called for rpc~n"),
@@ -215,14 +213,15 @@ findpred(Self, {PredId, PredProc}, Id) ->
     %printNode(Self),
     {SuccToPredId, _} = get_succ(Self, {PredId, PredProc}),
     %io:format("Successor: ~p~n~n", [SuccToPredId]),
-    IsBetween = is_betweenOC(Id, PredId, SuccToPredId),
+    IsBetween = common:is_betweenOC(Id, PredId, SuccToPredId),
     %io:format("Is Id(~p) Between PredId(~p) and his Successor(~p)~n", [Id, PredId, SuccToPredId]),
     if
-        IsBetween -> {PredId, PredProc};
+        IsBetween -> {1, {PredId, PredProc}};
         true ->
             ClosestPrecFinger = get_closest_preceding_finger(Self, {PredId, PredProc}, Id),
             %io:format("Closest Preceeding Finger: ~p~n", [ClosestPrecFinger]),
-            findpred(Self, ClosestPrecFinger, Id)
+            {HopCount, Pred} = findpred(Self, ClosestPrecFinger, Id),
+            {HopCount+1, Pred}
     end.
 
 find_successor(Self, Id) ->
@@ -249,7 +248,7 @@ update_finger(Self, RecipientProc, NewNode, Index) when RecipientProc =:= self()
     MyId = Self#node.nodeid,
     {NewNodeId,_} = NewNode,
     {NthFingerId, _} = lists:nth(Index, Self#node.fingers),
-    IsBetween = is_betweenCC(NewNodeId, MyId, NthFingerId),
+    IsBetween = common:is_betweenCC(NewNodeId, MyId, NthFingerId),
     if
         IsBetween ->
             %io:format("Updated Finger[~p], New Node(~p) between me(~p) and current finger(~p)~n", [Index, NewNodeId, MyId, NthFingerId]),
@@ -273,13 +272,14 @@ update_finger(Self, RecipientProc, NewNode, Index) ->
 get_fingers(Self, {LastFingerId, LastFingerProc}, Idx) ->
     MyId = Self#node.nodeid,
     Start = finger_start(Self, Idx),
-    ReuseLastFinger = is_between(Start, MyId, LastFingerId),
+    ReuseLastFinger = common:is_between(Start, MyId, LastFingerId),
+    T = getC(t),
     NewFinger = if
         ReuseLastFinger -> {LastFingerId, LastFingerProc};
         true -> find_successor(Self, Start)
     end,
     if
-        Idx == ?T -> [NewFinger];
+        Idx == T -> [NewFinger];
         true -> [NewFinger|get_fingers(Self, NewFinger, Idx+1)]
     end.
 
@@ -294,14 +294,15 @@ init_finger_table(Self, SomeNode) ->
 update_others(Self, Idx) ->
     MyId = Self#node.nodeid,
     MyNode = {MyId, self()},
-    SearchId = mod(1 + MyId - (1 bsl (Idx-1)), (1 bsl ?T)), % TODO 1 +... because otherwise we dont find nodeid=searchid
+    T = getC(t),
+    SearchId = mod(1 + MyId - (1 bsl (Idx-1)), (1 bsl T)), % TODO 1 +... because otherwise we dont find nodeid=searchid
     {_, PProc} = find_predecessor(Self, SearchId),
     %io:format("Node ~p: Predecessor to SearchId(~p) is ~p~n", [MyId, SearchId, PredId]),
     update_finger(Self, PProc, MyNode, Idx),
     if
-        Idx == ?T ->
+        Idx == T ->
             pass;
-        Idx =< ?T -> update_others(Self, Idx+1)
+        Idx =< T -> update_others(Self, Idx+1)
     end.
 
 
@@ -321,38 +322,95 @@ lastFinger(L, _) -> lists:last(L).
 
 buildFinger(MyId, Idx, SuccNeighbors, LastFinger) ->
     IntervalEnd = finger_start(MyId, Idx+1),
-    FilterFun = fun({Id,_}) -> is_betweenCO(Id, MyId, IntervalEnd) end,
+    FilterFun = fun({Id,_}) -> common:is_betweenCO(Id, MyId, IntervalEnd) end,
     {Fingers, Tail} = lists:splitwith(FilterFun, SuccNeighbors),
+    T = getC(t),
     Finger = case Fingers of
                  [] -> LastFinger;
                  _ -> randomElem(Fingers)
              end,
     if
-        Idx == ?T -> [Finger];
+        Idx == T -> [Finger];
         true -> [Finger|buildFinger(MyId, Idx+1, Tail, lastFinger(Fingers, Finger))]
     end.
 
 %% ===== IMPORT/EXPORT
 
-insertCountries({_,Proc}) ->
-    {ok, Countries} = file:consult("countries.txt"),
-    lists:foreach(fun({Country,Capitol}) ->
-                          Proc ! {insert, self(), Country, Capitol},
-                          receive
-                              {storedkey, Id} -> io:format("Stored Key ~p on ~p~n", [Country, Id])
-                          end
-                  end, Countries),
-    io:format("Stored all countries in DHT~n").
 
-fetchCountry({_, Proc}, Key) ->
+insertData(Proc, DataRows) ->
+    lists:foreach(fun({Key,Value}) ->
+                          Proc ! {insert, self(), Key, Value},
+                          receive
+                              {storedkey, _} -> pass
+                          end
+                  end, DataRows).
+
+insertDataFromFile({_, Proc}, FileName) ->
+    {ok, DataRows} = file:consult(FileName),
+    insertData(Proc, DataRows).
+
+insertDataFromFileP(Nodes, FileName) ->
+    {ok, DataRows} = file:consult(FileName),
+    N = min(length(Nodes), DataRows),
+    M = length(DataRows) div length(Nodes),
+    {Rest, Pids} = lists:foldl(fun(Node, {RestData, Procs}) ->
+                                    {MyDataRows, RestData2} = lists:split(M, RestData),
+                                    Pid = spawn(?MODULE, insertWorker, [self(), Node, MyDataRows]),
+                                    {RestData2,[Pid|Procs]}
+                            end, {DataRows,[]},lists:sublist(Nodes, N)),
+    insertData(proc(hd(Nodes)), Rest),
+    lists:foreach(fun(_) ->
+                          receive
+                              {finishedwork} -> pass
+                          end
+                  end, Pids),
+    io:format("All worker finished~n").
+
+insertWorker(Parent, {_,NodeProc}, DataRows) ->
+    lists:foreach(fun({Key,Value}) ->
+                          NodeProc ! {insert, self(), Key, Value},
+                          receive
+                              {storedkey, _} -> pass
+                          end
+                  end, DataRows),
+    Parent ! {finishedwork}.
+
+fetchDataRow({_, Proc}, Key) ->
     Proc ! {fetch, self(), Key},
-    Response = receive
+    receive
         {fetched, Resp} -> Resp
-               end,
-    case Response of
-        error -> io:format("Could not find Countrie ~p~n", [Key]);
-        {ok, Value} -> io:format("Capitol of Country ~p is ~p", [Key, Value])
     end.
+
+hopcount(Self, Id) ->
+    MyId = Self#node.nodeid,
+    {Hopcount, _} = findpred(Self, {MyId, self()}, Id),
+    Hopcount.
+
+failureRate(Nodes, Keys) ->
+    N = min(length(Nodes), Keys),
+    M = length(Keys) div length(Nodes),
+    {_, Pids} = lists:foldl(fun(Node, {RestKeys, Procs}) ->
+                             {MyKeys, RestKeys2} = lists:split(M, RestKeys),
+                             Pid = spawn(?MODULE, failureWorker, [self(), Node, MyKeys]),
+                             {RestKeys2,[Pid|Procs]}
+                     end, {Keys,[]},lists:sublist(Nodes, N)),
+    Counters = lists:map(fun(_) ->
+                      receive
+                          {finishedwork, Failures} -> Failures
+                      end
+                  end, Pids),
+    sum(Counters).
+
+failureRateWorker(Parent, Node, Keys) ->
+    Fetches = lists:map(fun(Key) -> fetchDataRow(Node, Key) end, Keys),
+    Failures = lists:foldl(
+      fun (A, B) ->
+              case A of
+                  {ok, _} -> B;
+                   error -> B+1
+              end
+      end, 0, Fetches),
+    Parent ! {finishedwork, Failures}.
 
 %% ===== FUNCTIONS ===== %%
 
@@ -373,74 +431,10 @@ get_closest_finger([], _, _) ->
 get_closest_finger([Finger], _, _) -> Finger;
 get_closest_finger([{FingerId,FingerPID}|Fingers], MyId, Id) ->
     %io:format("closest_finger: FingerId(~p) between me(~p) and id(~p)~n", [FingerId, MyId, Id]),
-    IsBetween = is_betweenCC(FingerId, MyId, Id) andalso FingerId /= MyId,
+    IsBetween = common:is_betweenCC(FingerId, MyId, Id) andalso FingerId /= MyId,
     if
         IsBetween ->
             {FingerId,FingerPID};
         true ->
             get_closest_finger(Fingers, MyId, Id)
     end.
-
-
-is_between(_, From, To) when From == To -> true;
-is_between(Id, From, To) when From < To ->
-    Id >= From andalso Id =< To;
-is_between(Id, From, To) when From > To ->
-    Id >= From orelse Id =< To.
-
-% Open Closed: Id != From, but Id==To
-% If From = To we assume the whole circle is meant
-is_betweenOC(_, From, To) when From == To -> true;
-is_betweenOC(Id, From, To) when From < To ->
-    Id > From andalso Id =< To;
-is_betweenOC(Id, From, To) when From > To ->
-    Id > From orelse Id =< To.
-
-is_betweenCO(_, From, To) when From == To -> true;
-is_betweenCO(Id, From, To) when From < To ->
-    Id >= From andalso Id < To;
-is_betweenCO(Id, From, To) when From > To ->
-    Id >= From orelse Id < To.
-
-is_betweenCC(_, From, To) when From == To -> true;
-is_betweenCC(Id, From, To) when From < To ->
-    Id > From andalso Id < To;
-is_betweenCC(Id, From, To) when From > To ->
-    Id > From orelse Id < To.
-
-mod(X,Y) -> (X rem Y + Y) rem Y.
-modRing(X) -> mod(X, (1 bsl ?T)).
-
-setNthElem(L, Idx, Elem) ->
-    lists:sublist(L, Idx-1) ++ [Elem] ++ lists:nthtail(Idx, L).
-
-randomElem(L) ->
-    Idx = random:uniform(length(L)),
-    lists:nth(Idx, L).
-
-master() ->
-    random:seed(now()),
-    InitialProc = spawn(?MODULE, init_initial_node, [new_node(0)]),
-    InitialId = get_id(InitialProc),
-    SecondProc = spawn(?MODULE, join, [new_node(1), {InitialId, InitialProc}]),
-    SecondId = get_id(SecondProc),
-    ThirdProc = spawn(?MODULE, join, [new_node(3), {InitialId, InitialProc}]),
-    ThirdId = get_id(ThirdProc),
-    ForthProc = spawn(?MODULE, join, [new_node(6), {InitialId, InitialProc}]),
-    ForthId = get_id(ForthProc),
-    FifthProc = spawn(?MODULE, join, [new_node(5), {InitialId, InitialProc}]),
-    FifthId = get_id(FifthProc),
-    %io:format("Chord with 2 nodes: ~p(~p), ~p(~p)", [InitialId, InitialProc, SecondId, SecondProc]),
-
-    timer:sleep(200),
-    InitialProc ! {printstate},
-    timer:sleep(200),
-    SecondProc ! {printstate},
-    timer:sleep(200),
-    ThirdProc ! {printstate},
-    timer:sleep(200),
-    ForthProc ! {printstate},
-    timer:sleep(200),
-    FifthProc ! {printstate},
-    timer:sleep(200),
-    pass.
