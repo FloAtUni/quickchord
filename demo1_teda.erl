@@ -1,4 +1,4 @@
--module(demo1).
+-module(demo1_teda).
 
 -export([master/0]).
 
@@ -6,14 +6,15 @@
 
 master() ->
     random:seed(now()),
-    InitialProc = spawn(qc, init_initial_node, [new_node(0)]),
+    {ok, [_,Node1,Node2,Node3,Node4|_]} = file:consult('enodes.conf'),
+    InitialProc = spawn(Node1, qc, init_initial_node, [new_node(0)]),
     InitialId = get_id(InitialProc),
     timer:sleep(50),
-    SecondProc = spawn(qc, join, [new_node(1), {InitialId, InitialProc}]),
+    SecondProc = spawn(Node2, qc, join, [new_node(1), {InitialId, InitialProc}]),
     timer:sleep(50),
-    ThirdProc = spawn(qc, join, [new_node(3), {InitialId, InitialProc}]),
+    ThirdProc = spawn(Node3, qc, join, [new_node(3), {InitialId, InitialProc}]),
     timer:sleep(50),
-    ForthProc = spawn(qc, join, [new_node(6), {InitialId, InitialProc}]),
+    ForthProc = spawn(Node4, qc, join, [new_node(6), {InitialId, InitialProc}]),
 
     timer:sleep(200),
     InitialProc ! {printstate},
