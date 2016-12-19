@@ -31,7 +31,7 @@ spawnRemoteTManNodes() ->
     PN = (getC(n) div length(Es)) + 1,
     Ps = lists:sublist(lists:flatten(lists:duplicate(PN,Es)),N),
     NodeIds = lists:zip([gen_node_id() || _ <- lists:seq(1,N)],Ps),
-    [ {NodeId, spawn(P, ?MODULE, node_init, [NodeId])} || {NodeId,P} <- NodeIds].
+    [ {NodeId, spawn(P, tman, node_init, [NodeId])} || {NodeId,P} <- NodeIds].
 
 cycle(NodeId, Neighbors, 1) ->
     Pred = hd(sortByPredDist(Neighbors, NodeId)),

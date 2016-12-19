@@ -1,19 +1,3 @@
-% Chord and T-Man algorithm
-
-% Compile with: c(qc).
-% Examples:
-%    quickchord:master().
-
-
-% Messages:
-% {getsucc, From} Get successor of receipient
-% {findsucc, From, Id} Find successor to node with id
-% {foundsucc, Succ} The response to above query
-% {findpred, From, Id} Find predecessor to node with id
-% {foundpred, Pred} The response to above query
-% {getprefing, From, Id} Get the closest preceding finger
-% {gotprefing, PreFing} Get the closest preceding finger
-
 -module(qc).
 
 % TODO replace with -export([master/2,...]).
@@ -31,7 +15,7 @@ gen_node_id() ->
 -record(node,
        {nodeid,
         predecessor,
-        fingers = [], % List of {id, proc} of length
+        fingers = [], % List of {id, proc} of Length T
         data}).
 
 successor(Self) -> hd(Self#node.fingers).
@@ -39,10 +23,8 @@ predecessor(Self) -> Self#node.predecessor.
 
 new_node() ->
     Id = gen_node_id(),
-    %io:format("Created new Node with id: ~p~n", [Id]),
     #node{nodeid=Id, data=dict:new()}.
 new_node(Id) ->
-    %io:format("Created new Node with id: ~p~n", [Id]),
     #node{nodeid=Id, data=dict:new()}.
 
 id({Id, _}) -> Id.
@@ -82,36 +64,28 @@ node_await(Self) ->
     MyId = Self#node.nodeid,
     receive
         {getid, FromProc} ->
-            %io:format("Node ~p: Got GetId Query~n", [MyId]),
             FromProc ! {gotid, MyId},
             node_await(Self);
         {getsucc, FromProc} ->
-            %io:format("Node ~p: Got GetSucc Query~n", [MyId]),
             FromProc ! {gotsucc, successor(Self)},
             node_await(Self);
         {getpred, FromProc} ->
-            %io:format("Node ~p: Got GetPred Query~n", [MyId]),
             FromProc ! {gotpred, predecessor(Self)},
             node_await(Self);
         {closestprecedingfinger, FromProc, Id} ->
-            %io:format("Node ~p: Got ClosestPrecedingFinger Query~n", [MyId]),
             FromProc ! {gotclosestprecedingfinger, closest_preceding_finger(Self, Id)},
             node_await(Self);
         {findpred, From, Id} ->
-            %io:format("Node ~p: Got FindPred Query~n", [MyId]),
             Pred = find_predecessor(Self, Id),
             From ! {foundpred, Pred},
             node_await(Self);
         {findsucc, From, Id} ->
-            %io:format("Node ~p: Got FindSuccessor Query~n", [MyId]),
             Succ = find_successor(Self, Id),
             From ! {foundsucc, Succ},
             node_await(Self);
         {newpred, Pred} ->
-            %io:format("Node ~p: Got New Predecessor Update Query~n", [MyId]),
             node_await(Self#node{predecessor=Pred});
         {updatefinger, NewNode, Idx} ->
-            %io:format("Node ~p: Got UpdateFinger Query with Index ~p~n", [MyId, Idx]),
             NewSelf = update_finger(Self, self(), NewNode, Idx),
             node_await(NewSelf);
         {setkey, Key, Value} ->
@@ -121,7 +95,6 @@ node_await(Self) ->
             Dict = Self#node.data,
             Result = dict:find(Key, Dict),
             case Result of
-            %case dict:find(Key, Self#node.data) of
                 {ok, Value} -> From ! {gotkey, Value};
                 error ->  From ! {gotkey, notfound}
             end,
@@ -144,8 +117,6 @@ node_await(Self) ->
             From ! {hopcount, Count},
             node_await(Self);
         {printstate} ->
-            %io:format("Node ~p: Got PrintState Query~n", [MyId]),
-            %io:format("~p~n~n", [Self])
             printNode(Self),
             node_await(Self);
         {exit} -> exit
@@ -195,10 +166,8 @@ set_key(Self, {_,NodeProc}, Key, Value) ->
     Self.
 
 get_closest_preceding_finger(Self, {_, NodeProc}, Id) when NodeProc =:= self() ->
-    %io:format("get_closest_preceding_finger on self~n"),
     closest_preceding_finger(Self, Id);
 get_closest_preceding_finger(_, {_, NodeProc}, Id) ->
-    %io:format("get_closest_preceding_finger rpc~n"),
     NodeProc ! {closestprecedingfinger, self(), Id},
     receive
         {gotclosestprecedingfinger, NewNode} -> NewNode
@@ -210,13 +179,11 @@ hopcount(Self, Id) ->
     Hopcount.
 
 find_predecessor(Self, Id) ->
-    %io:format("Find predecessor called on self()~n"),
     MyId = Self#node.nodeid,
     {_, Pred} = findpred(Self, {MyId, self()}, Id),
     Pred.
 
 find_predecessor(_, {_, SomeNodeProc}, Id) ->
-    %io:format("Find predecessor called for rpc~n"),
     SomeNodeProc ! {findpred, self(), Id},
     receive
         {foundpred, Pred} ->
@@ -224,28 +191,20 @@ find_predecessor(_, {_, SomeNodeProc}, Id) ->
     end.
 
 findpred(Self, {PredId, PredProc}, Id) ->
-    %io:format("~nFindPred with n'=~p and id=~p called~n", [PredId, Id]),
-    %io:format("With Node: "),
-    %printNode(Self),
     {SuccToPredId, _} = get_succ(Self, {PredId, PredProc}),
-    %io:format("Successor: ~p~n~n", [SuccToPredId]),
     IsBetween = common:is_betweenOC(Id, PredId, SuccToPredId),
-    %io:format("Is Id(~p) Between PredId(~p) and his Successor(~p)~n", [Id, PredId, SuccToPredId]),
     if
         IsBetween -> {1, {PredId, PredProc}};
         true ->
             ClosestPrecFinger = get_closest_preceding_finger(Self, {PredId, PredProc}, Id),
-            %io:format("Closest Preceeding Finger: ~p~n", [ClosestPrecFinger]),
             {HopCount, Pred} = findpred(Self, ClosestPrecFinger, Id),
             {HopCount+1, Pred}
     end.
 
 find_successor(Self, Id) ->
-    %io:format("Find successor called on self()~n"),
     Pred = find_predecessor(Self, Id),
     get_succ(Self, Pred).
 find_successor(_, {_, OtherProc}, Id) ->
-    %io:format("Find successor sends rpc~n"),
     OtherProc ! {findsucc, self(), Id},
     receive
         {foundsucc, Succ} ->
@@ -267,23 +226,16 @@ update_finger(Self, RecipientProc, NewNode, Index) when RecipientProc =:= self()
     IsBetween = common:is_betweenCC(NewNodeId, MyId, NthFingerId),
     if
         IsBetween ->
-            %io:format("Updated Finger[~p], New Node(~p) between me(~p) and current finger(~p)~n", [Index, NewNodeId, MyId, NthFingerId]),
             Fingers = setNthElem(Self#node.fingers, Index, NewNode),
             {_, PredProc} = Self#node.predecessor,
             update_finger(Self, PredProc, NewNode, Index),
             Self#node{fingers=Fingers};
         true ->
-            %io:format("Not Updated Finger[~p], New Node(~p) not between me(~p) and current finger(~p)~n", [Index, NewNodeId, MyId, NthFingerId]),
             Self
     end;
 update_finger(Self, RecipientProc, NewNode, Index) ->
     RecipientProc ! {updatefinger, NewNode, Index},
     Self.
-
-
-% {foundsucc, Succ} The response to above query
-% {findpred, From, Id} Find predecessor to node with id
-% {foundpred, Pred} The response to above query
 
 get_fingers(Self, {LastFingerId, LastFingerProc}, Idx) ->
     MyId = Self#node.nodeid,
@@ -446,11 +398,9 @@ closest_preceding_finger(Self, Id) ->
 
 
 get_closest_finger([], _, _) ->
-    %io:format("Error: get_closest_finger got empty list~n"),
     erlang:error(fingers_empty);
 get_closest_finger([Finger], _, _) -> Finger;
 get_closest_finger([{FingerId,FingerPID}|Fingers], MyId, Id) ->
-    %io:format("closest_finger: FingerId(~p) between me(~p) and id(~p)~n", [FingerId, MyId, Id]),
     IsBetween = common:is_betweenCC(FingerId, MyId, Id) andalso FingerId /= MyId,
     if
         IsBetween ->

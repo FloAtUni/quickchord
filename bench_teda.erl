@@ -36,7 +36,7 @@ master() ->
     timer:sleep(getC(cycletimems)*(2+getC(nbcycles))),
 
     %insertData(hd(Nodes)),
-    %insertSmall(Nodes),
+    insertSmall(Nodes),
 
     %lists:foreach(fun({_,Proc}) ->
     %                      Proc ! {printstate},

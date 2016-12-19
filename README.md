@@ -41,12 +41,21 @@ To run demo1 locally make sure that T is set to 3(to get same output as in our r
     erl -s demo1 master
 
 #### Teda
+Make sure that T is set to 3 in config.erl.
 Copy all .erl files into teda/apps/quickchord/ and run
 
-    ../../scripts/run.sh quickchord "demo1:master()" hosts_alive.conf diufpc80.unifr.ch UserName
+    ../../scripts/run.sh quickchord "demo1_teda:master()" hosts_alive.conf diufpc80.unifr.ch UserName
 
-### Step 3: Starting Chord without T-Man
+### Run Benchmark
 
+#### Locally
+To run the benchmark locally set T in config.erl to the desired value then run:
 
-### Step 4: Starting Chord with T-Man
+    make bench
+    erl -s bench master
 
+#### Teda
+Make sure that T is set to 3 in config.erl and run.
+
+    make deploy
+    ../../scripts/run.sh quickchord "bench_teda:master()" hosts_alive.conf diufpc80.unifr.ch UserName
